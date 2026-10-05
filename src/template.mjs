@@ -3,7 +3,7 @@
 // workspace, so the same template serves different apps.
 import { captionGroups, captionStyle } from './captions.mjs';
 import { musicMix, voiceSegments } from './audio.mjs';
-import { kfPlan } from './keyframes.mjs';
+import { kfPlan, motionRange } from './keyframes.mjs';
 import { headPlan, outroOf } from './headfx.mjs';
 import { bgTimeline, bgMarkup, bgCss, bgScript, bgOrbitOpen } from './backgrounds.mjs';
 
@@ -196,25 +196,30 @@ export function build(v, brand, fmt = '9:16') {
     : '<i class="tap-dot"></i>'}</div>`).join('');
   const hfx = headPlan(v.heads);
   const bgt = bgTimeline(v);
-  const heads = v.heads.map((h, i) => headHtml(h.text, `head${h.hook ? ' hook' : ''}${hfx.open[i] ? ' open' : ''}`).replace('<h1 ', `<h1 id="h${i}" `)).join('\n        ');
+  const heads = v.heads.map((h, i) => {
+    const html = headHtml(h.text, `head${h.hook ? ' hook' : ''}${hfx.open[i] ? ' open' : ''}`).replace('<h1 ', `<h1 id="h${i}" `);
+    return html.replace(/(<h1[^>]*>)([\s\S]*)(<\/h1>)/, `$1<span id="h${i}-motion" class="head-motion">$2</span>$3`);
+  }).join('\n        ');
   // With transitions, clips stack by start (the incoming one on top) and a clip that hands over is held longer.
   const plans = { clip: clipTransitions(v.clips), 'clip2-': clipTransitions(L === 'dual' ? v.clips2 : []) };
   const place = (c, z) => { const p = clipPlacement(c, layouts[L].screen), style = p.style + (z ? `${p.style ? ';' : ''}z-index:${z}` : ''); return `class="clip screen-video${p.cls}"${style ? ` style="${style}"` : ''}`; };
   const clipTags = (list, prefix, track) => list.map((c, i) => {
     const plan = plans[prefix], z = plan.trs.length ? plan.z[i] : 0, dur = +(c.dur + plan.hold[i]).toFixed(3);
-    return isImage(c.src)
+    const media = isImage(c.src)
       ? `<img id="${v.id}-${prefix}${i}" ${place(c, z)} src="assets/clips/${esc(c.src)}" data-start="${c.start}" data-duration="${dur}" data-track-index="${track + i}" alt="" />`
       : `<video id="${v.id}-${prefix}${i}" ${place(c, z)} src="assets/clips/${esc(c.src)}" data-start="${c.start}" data-duration="${dur}" data-media-start="${c.media ?? 0}"${c.rate ? ` data-playback-rate="${c.rate}"` : ''} data-track-index="${track + i}"${clipSound(c)} playsinline></video>`;
+    return `<div id="${v.id}-${prefix}${i}-motion" class="clip-motion" style="z-index:${z}">${media}</div>`;
   }).join('\n                ');
   // Keyframes (c.kf) animate a clip after its transition into the screen is done; see src/keyframes.mjs.
   const clipKfs = [['clip', v.clips], ['clip2-', L === 'dual' ? v.clips2 : []]].flatMap(([prefix, list]) => list.map((c, i) => {
     const d = plans[prefix].trs.find(t => t.to === i)?.d || 0;
     const plan = kfPlan(c.kf, +(c.start + d).toFixed(3), Math.max(0, c.dur - d));
-    return plan && { id: `${v.id}-${prefix}${i}`, ...plan };
+    return plan && { id: `${v.id}-${prefix}${i}-motion`, ...plan };
   })).filter(Boolean);
   const clipTrs = Object.entries(plans).flatMap(([prefix, p]) => p.trs.map(({ to, from, t, d, type }) => ({ to: `${v.id}-${prefix}${to}`, from: from >= 0 ? `${v.id}-${prefix}${from}` : null, t, d, type })));
   const chrome = L === 'browser' ? `<div class="chrome"><i></i><i></i><i></i><span class="addr"><span class="ms">lock</span>${esc(brand.url || '')}</span></div>` : '';
   const phone = (id, list, prefix, track, tag) => `<div id="${id}" class="phone L-${L}">
+        <div id="${id}-motion" class="phone-motion">
         <div id="${id}-zoom" class="phone-zoom">
           <div id="${id}-inner" class="phone-inner">${id === 'phone' && taps ? `
             <div class="taps">${taps}</div>` : ''}
@@ -228,6 +233,7 @@ export function build(v, brand, fmt = '9:16') {
           </div>
         </div>
         ${tag ? `<div class="phone-tag"><span class="tag-avatar">${esc(tag[0])}</span>${esc(tag)}</div>` : ''}
+        </div>
       </div>`;
   const phones = L === 'dual'
     ? phone('phone', v.clips, 'clip', 1, v.names?.[0] || 'Alex') + '\n      ' + phone('phone2', v.clips2, 'clip2-', 21, v.names?.[1] || 'Jordan')
@@ -236,11 +242,16 @@ export function build(v, brand, fmt = '9:16') {
   const chips = v.chips.map((c, i) => {
     const [bg, ink] = chipColors[c.color] || chipColors.blue || Object.values(chipColors)[0];
     const at = placeIn(c, fmt);
-    return `<div id="chip${i}" class="chip" style="left:${at.x}px;top:${at.y}px">
+    return `<div id="chip${i}" class="chip" style="left:${at.x}px;top:${at.y}px"><div id="chip${i}-motion" class="chip-motion">
           <span class="chip-icon" style="background:${bg};color:${ink}"><span class="ms">${esc(c.icon)}</span></span>
           <span class="chip-copy"><span class="chip-label" style="color:${bg}">${c.live ? '<i class="live-dot"></i>' : ''}${esc(c.label)}</span><span class="chip-text" id="chip${i}-text">${esc(c.text)}</span></span>
-        </div>`;
+        </div></div>`;
   }).join('\n        ');
+  const elementKfs = [
+    ...v.heads.map((h, i) => { const r = motionRange(v, 'head', i); return { id: `h${i}-motion`, ...kfPlan(h.kf, r.start, r.duration) }; }).filter(k => k.set),
+    ...v.chips.map((c, i) => { const r = motionRange(v, 'chips', i); return { id: `chip${i}-motion`, ...kfPlan(c.kf, r.start, r.duration) }; }).filter(k => k.set),
+    ...['phone', ...(L === 'dual' ? ['phone2'] : [])].map(id => ({ id: `${id}-motion`, ...kfPlan(v.deviceMotion?.kf, 0, END) })).filter(k => k.set)
+  ];
   const mix = v.music?.src ? musicMix(v) : null;
   // The voice: one track, or a piece of the generated voice-over per line, wherever that line is now.
   const voVol = v.audioVol != null && v.audioVol !== 1 ? ` data-volume="${Math.max(0, Math.min(1, +v.audioVol))}"` : '';
@@ -296,6 +307,7 @@ export function build(v, brand, fmt = '9:16') {
       const taps = ${JSON.stringify(v.taps.map(t => ({ t: t.t, cursor: pointer(t), ...(t.x2 != null && { swipe: true, dx: Math.round(t.x2 - t.x), dy: Math.round((t.y2 ?? t.y) - t.y), dur: Math.max(0.12, +t.dur || 0.4) }), ...(t.hold > 0 && t.x2 == null && { hold: +t.hold }) })))};
       const clipTrs = ${JSON.stringify(clipTrs)};
       const clipKfs = ${JSON.stringify(clipKfs)};
+      const elementKfs = ${JSON.stringify(elementKfs)};
       const END = ${END};
       const caps = ${JSON.stringify(capGroups.map(g => ({ s: g.s, e: g.e, w: g.words.map(w => w.t), em: g.words.map(w => !!w.em) })))};
       const CAP = ${JSON.stringify({ style: cs.style, color: capColor, hi: capHi, ink: capInk, shadow: capShadow })};
@@ -386,7 +398,7 @@ export function build(v, brand, fmt = '9:16') {
         }
       });
       // Keyframes come after the transitions: they start once the transition is over, so they never fight over a property.
-      clipKfs.forEach(k => {
+      [...clipKfs, ...elementKfs].forEach(k => {
         const node = document.getElementById(k.id);
         tl.set(node, k.set, k.setAt);
         k.segs.forEach(s => tl.fromTo(node, s.from, { ...s.to, duration: s.d, ease: s.ease, immediateRender: false }, s.t));
@@ -478,7 +490,7 @@ export function build(v, brand, fmt = '9:16') {
         tl.to('#overline', { opacity: 0, y: -16, duration: 0.3, ease: 'power2.in' }, END - 0.2);
         if (OUTRO === 'slide') {
           tl.to('.phone', { y: -${FH}, duration: 0.7, ease: 'power3.in', stagger: 0.05 }, END - 0.4);
-          tl.fromTo('#endcard', { opacity: 1, y: ${FH} }, { y: 0, duration: 0.8, ease: 'power4.out' }, END - 0.1);
+          tl.fromTo('#endcard', { opacity: 1, y: ${FH} }, { opacity: 1, y: 0, duration: 0.8, ease: 'power4.out' }, END - 0.1);
         } else if (OUTRO === 'zoom') {
           tl.to('.phone', { scale: 2.2, opacity: 0, filter: 'blur(18px)', duration: 0.6, ease: 'power2.in', stagger: 0.04 }, END - 0.3);
           tl.fromTo('#endcard', { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 0.7, ease: 'expo.out' }, END + 0.1);
@@ -520,6 +532,7 @@ export function build(v, brand, fmt = '9:16') {
     <script src="gsap.min.js"></script>
     <style>
       @font-face { font-family: 'Brand'; src: url('assets/fonts/${esc(font)}'); font-weight: 100 900; font-style: normal; }
+      @font-face { font-family: 'Google Sans Flex'; src: url('assets/fonts/google-sans-flex-latin.woff2') format('woff2'); font-weight: 100 900; font-style: normal; }
       @font-face { font-family: 'Material Symbols Rounded'; src: url('assets/fonts/material-symbols.woff2') format('woff2'); font-weight: 600; font-style: normal; }
       :root { --bg: ${hex(T.bg)}; --text: ${hex(T.text)}; --muted: ${hex(T.muted)}; --accent: ${hex(T.accent)}; --accent-ink: ${hex(T.accentInk)}; --mark-bg: ${hex(T.markBg || T.accent)}; --mark-ink: ${hex(T.markInk || T.accentInk)}; }
       * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -545,6 +558,7 @@ export function build(v, brand, fmt = '9:16') {
       .head.hook { font-size: 104px; letter-spacing: -4px; }
       .w { display: inline-block; overflow: hidden; vertical-align: top; padding-bottom: 10px; margin-bottom: -10px; }
       .wi { display: inline-block; }
+      .head-motion { display: block; transform-origin: 50% 50%; }
       .ch { position: relative; }
       .ch.cur::after { content: ''; position: absolute; left: 100%; bottom: 0.1em; width: 0.5em; height: 0.1em; margin-left: 0.04em; background: currentColor; }
       .wipe-bar { position: absolute; top: 0; bottom: 0; left: 0; z-index: 9999; background: var(--accent); pointer-events: none; transform: translateX(-100%); }
@@ -553,6 +567,8 @@ export function build(v, brand, fmt = '9:16') {
 
       /* device: shared */
       .phone { position: absolute; }
+      .phone-motion, .clip-motion { position: absolute; inset: 0; transform-origin: 50% 50%; }
+      .chip-motion { display: flex; align-items: center; gap: inherit; transform-origin: 50% 50%; }
       .phone-zoom, .phone-inner { position: absolute; inset: 0; transform-origin: 50% 70%; }
       .phone-scale { position: absolute; inset: 0; }
       .device { position: absolute; inset: 0; background: #1a1d24; display: flex; flex-direction: column; box-shadow: 0 0 0 2px ${hex(T.deviceRing)}, 0 60px 120px #000a, 0 0 140px ${a(T.deviceGlow, '26')}; }
@@ -625,7 +641,8 @@ export function build(v, brand, fmt = '9:16') {
       .tap-cursor path { fill: #fff; stroke: #111; stroke-width: 1.3; stroke-linejoin: round; }
 
       /* chips */
-      .chip { position: absolute; display: flex; align-items: center; gap: 22px; padding: 20px 34px 20px 20px; border-radius: 40px; background: #181b20f2; border: 2px solid #343945; box-shadow: 0 30px 60px #000b; opacity: 0; transform-origin: 0% 50%; z-index: 10; }
+      .chip { position: absolute; display: flex; align-items: center; gap: 22px; opacity: 0; transform-origin: 0% 50%; z-index: 10; }
+      .chip-motion { padding: 20px 34px 20px 20px; border-radius: 40px; background: #181b20f2; border: 2px solid #343945; box-shadow: 0 30px 60px #000b; }
       .chip-icon { width: 84px; height: 84px; border-radius: 26px; display: grid; place-items: center; flex: none; }
       .chip-copy { display: flex; flex-direction: column; gap: 6px; }
       .chip-label { display: flex; align-items: center; gap: 10px; font-size: 24px; font-weight: 800; letter-spacing: 2.5px; text-transform: uppercase; }

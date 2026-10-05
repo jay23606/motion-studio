@@ -10,6 +10,32 @@ const home = mkdtempSync(join(tmpdir(), 'ms-home-'));
 process.env.HOME = process.env.USERPROFILE = home;
 const { startServer } = await import('../src/server.mjs');
 
+test('templates survive reopening, create independent videos, validate missing media and trash only the template', async () => {
+  const { createWorkspace } = await import('../src/workspace.mjs');
+  const { writeFileSync, existsSync } = await import('node:fs');
+  const dir = join(home, 'templates'); createWorkspace(dir, 'Templates');
+  writeFileSync(join(dir, 'assets/clips/a.png'), 'image'); writeFileSync(join(dir, 'assets/clips/b.png'), 'image');
+  const first = await startServer({ port: 0, workspace: dir });
+  const post = (url, body, method = 'POST') => fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  try {
+    const result = await post(`${first.url}/api/templates`, { id: 'launch', name: 'Launch', spec: { dur: 4, heads: [{ t: 0, text: 'Original' }], clips: [{ src: 'a.png', start: 0, dur: 3, kf: [{ t: 0, s: 1 }, { t: 2, s: 1.2 }] }] } });
+    assert.equal(result.status, 201);
+    assert.equal((await post(`${first.url}/api/templates`, { id: '../escape', name: 'Bad', spec: {} })).status, 400);
+  } finally { await new Promise(ok => first.server.close(ok)); }
+  const reopened = await startServer({ port: 0, workspace: dir });
+  try {
+    const { templates } = await (await fetch(`${reopened.url}/api/state`)).json(); assert.equal(templates[0].name, 'Launch');
+    const result = await post(`${reopened.url}/api/videos`, { id: 'new-launch', template: 'launch', values: { 'heads.0.text': 'New', 'media-0': 'b.png' }, brand: 'brand' });
+    assert.equal(result.status, 200); const v = await result.json(); assert.equal(v.clips[0].src, 'b.png'); assert.equal(v.heads[0].text, 'New'); assert.equal(v.clips[0].kf[1].s, 1.2);
+    const missing = await post(`${reopened.url}/api/videos`, { id: 'bad-launch', template: 'launch', values: { 'media-0': 'missing.png' } }); assert.equal(missing.status, 400);
+    assert.equal((await post(`${reopened.url}/api/templates/launch`, { name: 'Renamed', description: 'Test' }, 'PUT')).status, 200);
+    assert.equal((await (await fetch(`${reopened.url}/api/templates/launch`)).json()).spec.heads[0].text, 'Original');
+    assert.equal((await fetch(`${reopened.url}/api/templates/launch`, { method: 'DELETE' })).status, 200);
+    assert.ok(existsSync(join(dir, 'assets/clips/a.png'))); assert.ok(existsSync(join(dir, 'specs/new-launch.json')));
+    assert.equal((await fetch(`${reopened.url}/api/templates/launch`)).status, 404);
+  } finally { await new Promise(ok => reopened.server.close(ok)); }
+});
+
 test('takes the next port in the list when the first is busy', async () => {
   const busy = createServer();
   await new Promise(ok => busy.listen(0, '127.0.0.1', ok));

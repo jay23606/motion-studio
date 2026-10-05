@@ -9,6 +9,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join, extname, basename, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { layouts, formats, transitions, normalize, mediaOf, defaultTheme, defaultChipColors } from './template.mjs';
+import { useTemplate } from './user-templates.mjs';
 import { toSrt, wordsFromWhisper, subsFromWords } from './captions.mjs';
 import { createDemoManager } from './demo-session.mjs';
 import { parseSilences, silenceLevels, speechSegments, mapFromSegments } from './silence.mjs';
@@ -439,6 +440,7 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace, 
       fonts: ws.files(ws.p.fonts, ['.woff2', '.woff', '.ttf', '.otf']).filter(f => !f.startsWith('material-symbols')),
       logos: ws.files(ws.p.brandAssets, ['.svg', '.png', '.jpg', '.jpeg', '.webp']),
       brands: ws.brands(),
+      templates: ws.templates(),
       tts: { piper: PIPER.filter(p => t.piperVoices && existsSync(join(t.piperVoices, `${p}.onnx`))), python: !!(t.python && existsSync(t.python)) }
     };
   }
@@ -459,7 +461,7 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace, 
         return send(res, 200, readFileSync(join(UI, 'index.html'), 'utf8').replace('<html lang="nl">', `<html lang="${want}" data-ui-lang="${want}">`), MIME['.html']);
       }
       if ((m = /^\/ui\/([\w.-]+)$/.exec(p))) return sendFile(req, res, join(UI, m[1]));
-      if ((m = /^\/lib\/(captions|audio|starters|keyframes|edit|silence|gestures|demo|headfx|backgrounds|template)\.mjs$/.exec(p))) return sendFile(req, res, join(APP_ROOT, 'src', `${m[1]}.mjs`));
+      if ((m = /^\/lib\/(captions|audio|starters|keyframes|edit|silence|gestures|demo|headfx|backgrounds|template|user-templates)\.mjs$/.exec(p))) return sendFile(req, res, join(APP_ROOT, 'src', `${m[1]}.mjs`));
 
       if (p.startsWith('/api/demo') && !ws) return send(res, 400, { error: 'Open eerst een project.' });
       if (await demo.route(p, method, req, res, { readJsonBody, send, url })) return;
@@ -512,6 +514,23 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace, 
       if ((m = /^\/thumbs\/([^/]+\.jpg)$/.exec(p))) return sendFile(req, res, join(ws.root, '.cache', 'thumbs', basename(m[1])));
       if ((m = /^\/api\/thumbs\/([^/]+)$/.exec(p))) return send(res, 200, await thumbsOf(m[1]));
 
+      if (p === '/api/templates' && method === 'POST') {
+        const { id, spec, name, description, fields } = await readJsonBody(req);
+        if (!validId(id) || !spec || typeof spec !== 'object' || !String(name || '').trim()) return send(res, 400, { error: 'Geef de template een naam en een geldige id.' });
+        if (ws.readTemplate(id)) return send(res, 409, { error: 'Deze template bestaat al.' });
+        return send(res, 201, ws.writeTemplate(id, spec, { name, description, fields }));
+      }
+      if ((m = /^\/api\/templates\/([a-z0-9-]+)$/.exec(p))) {
+        const t = ws.readTemplate(m[1]);
+        if (!t) return send(res, 404, { error: 'Template niet gevonden.' });
+        if (method === 'DELETE') { ws.trashTemplate(m[1]); return send(res, 200, { ok: true }); }
+        if (method === 'PUT') {
+          const { name, description } = await readJsonBody(req);
+          if (!String(name || '').trim()) return send(res, 400, { error: 'Geef de template een naam.' });
+          return send(res, 200, ws.writeTemplate(m[1], t.spec, { name, description, fields: t.fields }));
+        }
+        if (method === 'GET') return send(res, 200, t);
+      }
       if ((m = /^\/api\/videos\/([a-z0-9-]+)$/.exec(p))) {
         const id = m[1];
         if (method === 'GET') return ws.hasSpec(id) ? send(res, 200, ws.readSpec(id)) : send(res, 404, { error: 'not found' });
@@ -520,11 +539,18 @@ export async function startServer({ port = 3400, host = '127.0.0.1', workspace, 
         if (method === 'DELETE') { ws.trashSpec(id); return send(res, 200, { ok: true }); }
       }
       if (p === '/api/videos' && method === 'POST') {
-        const { id, spec } = await readJsonBody(req);
+        const { id, spec, template, values, brand } = await readJsonBody(req);
         if (!validId(id)) return send(res, 400, { error: 'Gebruik alleen kleine letters, cijfers en streepjes.' });
         if (ws.hasSpec(id)) return send(res, 409, { error: `"${id}" bestaat al.` });
-        const v = normalize({ ...spec, id });
-        delete v.audio; delete v.dual;
+        if (template && (!validId(template) || !ws.readTemplate(template))) return send(res, 404, { error: 'Template niet gevonden.' });
+        const v = normalize({ ...(template ? useTemplate(ws.readTemplate(template), values, brand) : spec), id });
+        if (template) {
+          const missing = [...v.clips, ...v.clips2].map(c => c.src).filter(src => !src || basename(src) !== src || !existsSync(join(ws.p.clips, src)));
+          if (missing.length) return send(res, 400, { error: 'Kies een beschikbare bron voor elke clip in de template.' });
+          if (v.audio && !existsSync(join(ws.p.vo, basename(v.audio)))) delete v.audio;
+          if (v.music?.src && !existsSync(join(ws.p.vo, basename(v.music.src)))) delete v.music;
+        } else delete v.audio;
+        delete v.dual;
         if (v.vo) { delete v.vo.file; v.vo.lines = (v.vo.lines || []).map(({ len, at, ...l }) => l); }
         ws.writeSpec(id, v);
         return send(res, 200, v);

@@ -91,10 +91,10 @@ test('build: transitions extend the outgoing clip and animate both', () => {
 test('build: keyframes animate a clip after its transition, and every transition type builds', () => {
   const kf = [{ t: 0, s: 1 }, { t: 1, s: 1.4, x: 40, ease: 'power3.out' }];
   const html = build(video({ clips: [{ src: 'a.png', start: 0.5, dur: 3, kf }] }), brand);
-  assert.match(html, /const clipKfs = \[\{"id":"demo-clip0","set":\{[^}]*\},"setAt":0.5,"segs":\[\{"t":0.5,"d":1,/);
+  assert.match(html, /const clipKfs = \[\{"id":"demo-clip0-motion","set":\{[^}]*\},"setAt":0.5,"segs":\[\{"t":0.5,"d":1,/);
   // With a transition the keyframes start once it is over.
   const withTr = build(video({ clips: [{ src: 'a.png', start: 0.5, dur: 1 }, { src: 'b.png', start: 1.5, dur: 3, tr: 'fade', kf }] }), brand);
-  assert.match(withTr, /"id":"demo-clip1","set":\{[^}]*\},"setAt":2,/);
+  assert.match(withTr, /"id":"demo-clip1-motion","set":\{[^}]*\},"setAt":2,/);
   assert.match(build(video(), brand), /const clipKfs = \[\];/);
   for (const tr of Object.keys(transitions)) {
     const h = build(video({ clips: [{ src: 'a.png', start: 0.5, dur: 1 }, { src: 'b.png', start: 1.5, dur: 3, tr }] }), brand);

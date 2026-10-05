@@ -34,6 +34,10 @@ tablet, browser window, full screen, or no device at all with the text centered)
 
 - **Starters** for the usual promo videos (app launch, how-to in 3 steps, before/after, website tour, quick tip),
   filled with your own clips so you start from a finished video instead of an empty timeline
+- **Your own templates**: save a video with replaceable text and clips, then reuse its timing, design and animations
+  under *New video*. Templates live in the project folder; manage them under *File → My templates*.
+- **Visual animation editing** for clips, headlines, callouts and the device: choose a motion preset or move, scale and
+  rotate the selection in the preview to create a keyframe at the playhead. Every change supports undo.
 - **Headlines** that rise in word by word, with an accent color (`*like this*`)
 - **Callouts** with icons, counters and a live dot, dragged into place on the preview
 - **Transitions** between clips (crossfade, slide, whip, zoom, blur, flash, spin) and **keyframes** to move, scale,
@@ -131,8 +135,8 @@ Everything below is open for grabs. Comment on (or open) an issue so others know
 - 🎙️ **Whisper on macOS and Linux**: Windows installs whisper.cpp by itself, elsewhere it has to be installed by hand
 - 🧪 **More tests**: the modules (`npm test`) and the timeline basics (`npm run test:ui`) are covered; rendering and
   most of the inspector aren't yet
-- 🎞️ **Keyframes on more than clips**: callouts, headlines and the device
-- 🖼️ **Templates**: save a video as a reusable starting point for the next one
+- 🎞️ **More animation tools**: custom easing curves and motion paths
+- 🖼️ **Template exchange**: export a template with its media to another project
 
 Found a bug? [Open an issue](https://github.com/tinygusie2/motion-studio/issues/new/choose). Have an idea?
 Same place. Questions are welcome too.

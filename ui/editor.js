@@ -5,7 +5,8 @@ import { createDemoStudio } from '/ui/demo.js';
 import { silenceCuts, silenceLevels } from '/lib/silence.mjs';
 import { musicDefaults, musicMix, speechSpans } from '/lib/audio.mjs';
 import { starters, starterSpec } from '/lib/starters.mjs';
-import { kfList, kfAt, kfFull, kfEases, kfDefaultEase } from '/lib/keyframes.mjs';
+import { kfList, kfAt, kfFull, kfEases, kfDefaultEase, motionPresets, presetKeyframes, putKeyframe, motionRange } from '/lib/keyframes.mjs';
+import { templateFields, templateSlots } from '/lib/user-templates.mjs';
 import { headIns, headOuts, headInOf, headOutOf, outros, outroOf } from '/lib/headfx.mjs';
 import { bgStyles, bgOf, bgTimeline } from '/lib/backgrounds.mjs';
 import { mediaOf, sceneTimeline, deviceOf, sceneTransitions, sceneTrOf, sceneTrDur } from '/lib/template.mjs';
@@ -64,7 +65,7 @@ function applyState(s) {
   Object.assign(S, { canTrash: s.canTrash, workspace: s.workspace, settings: s.settings, layouts: s.layouts, screens: s.screens, devs: s.devs, formats: s.formats, transitions: s.transitions, insets: s.insets, whisper: s.whisper, defaultTheme: s.defaultTheme, defaultChipColors: s.defaultChipColors });
   $('#project-name').textContent = s.workspace?.name || 'Geen project';
   if (!s.workspace) return;
-  Object.assign(S, { list: s.videos, clipAudio: s.clipAudio || {}, clips: s.clips, audio: s.audio, brands: s.brands, fonts: s.fonts, logos: s.logos, tts: s.tts });
+  Object.assign(S, { list: s.videos, templates: s.templates || [], clipAudio: s.clipAudio || {}, clips: s.clips, audio: s.audio, brands: s.brands, fonts: s.fonts, logos: s.logos, tts: s.tts });
   const sel = $('#video-select');
   sel.replaceChildren(...S.list.map(v => el('option', { value: v.id, 'data-hint': v.overline || '' }, v.id)));
   if (S.id) sel.value = S.id;
@@ -77,7 +78,7 @@ async function openVideo(id) {
   if (S.saveTimer) await flushSave();
   stashHistory();
   S.spec = await api(`/api/videos/${id}`);
-  S.id = id; S.sel = null; S.multi = null; S.t = 0;
+  S.id = id; S.sel = null; S.multi = null; S.t = 0; S.motionEdit = false;
   unstashHistory(id);
   localStorage.setItem(`ms-last:${S.workspace.path}`, id);
   $('#video-select').value = id;
@@ -192,7 +193,7 @@ function headSpans(text) {
     return w;
   }).flatMap((w, k) => (k ? [' ', w] : [w]));
 }
-const liveHead = (id, text) => doc => doc.getElementById(id)?.replaceChildren(...headSpans(text));
+const liveHead = (id, text) => doc => (doc.getElementById(`${id}-motion`) || doc.getElementById(id))?.replaceChildren(...headSpans(text));
 const liveText = (id, text) => doc => { const n = doc.getElementById(id); if (n) n.textContent = text; };
 // The text after an element's icon or mark (the overline, a callout label): its last text node.
 const liveTail = (id, text, sel) => doc => {
@@ -233,6 +234,7 @@ function reloadPreview() {
     front.classList.replace('front', 'back'); back.classList.replace('back', 'front');
     front.src = 'about:blank';
     S.player = p;
+    drawMotionBox(w.document);
     $('#pv-loading').hidden = true;
     if (wasPlaying) p.play();
   };
@@ -243,6 +245,7 @@ const togglePlay = () => S.player && (S.player.playing ? S.player.pause() : S.pl
 
 function onTime() {
   if (!V()) return;
+  drawMotionBox();
   if ((S.tapMode || S.sel?.kind === 'tap') && Math.abs((S.lastMarkT ?? -9) - S.t) > 0.1) { S.lastMarkT = S.t; drawTapMarks(); }
   $('#timecode').textContent = `${fmt(S.t)} / ${fmt(DUR())}`;
   $('#btn-play').firstChild.textContent = S.playing ? 'pause' : 'play_arrow';
@@ -272,6 +275,7 @@ function wirePreviewDom(doc) {
   markPreviewSelection(doc);
   drawTapMarks(doc);
   doc.addEventListener('pointerdown', e => {
+    if (S.motionEdit && e.target.closest('#ms-motion-box')) return dragMotion(doc, e);
     // Invisible layers (the end card, the top fade, callouts that aren't showing yet) lie on top of the device,
     // so the event target is often one of those. Look through every layer under the pointer instead and take the
     // first visible match.
@@ -472,15 +476,17 @@ function markPreviewSelection(doc = $('.pv.front')?.contentDocument) {
 // ---------- selection ----------
 function selItem() {
   if (!S.sel) return null;
-  if (S.sel.kind === 'end' || S.sel.kind === 'bg0' || S.sel.kind === 'lay0') return V();
+  if (S.sel.kind === 'end' || S.sel.kind === 'bg0' || S.sel.kind === 'lay0' || S.sel.kind === 'device') return V();
   if (S.sel.kind === 'audio') return V().audio ? V() : null;
   if (S.sel.kind === 'music') return V().music?.src ? V().music : null;
   return listOf(S.sel.kind)?.[S.sel.i] ?? null;
 }
 function select(sel, jump = true) {
+  if (sel?.kind !== S.sel?.kind || sel?.i !== S.sel?.i) S.motionEdit = false;
   S.sel = sel;
   S.multi = null;
   renderInspector(); renderTimeline(); markPreviewSelection();
+  drawMotionBox();
   if (!jump || !sel) return;
   const it = selItem();
   const range = itemRange(sel.kind, it, sel.i);
@@ -554,7 +560,7 @@ function removeSel() {
     return toast(`${refs.length} items verwijderd`);
   }
   const { kind, i } = S.sel || {};
-  if (!kind || kind === 'end' || kind === 'bg0' || kind === 'lay0' || kind === 'brand') return;
+  if (!kind || ['end', 'bg0', 'lay0', 'brand', 'device'].includes(kind)) return;
   if (kind === 'audio') commit(v => { delete v.audio; delete v.audioVol; });
   else if (kind === 'music') commit(v => { delete v.music; });
   else commit(v => listOf(kind).splice(i, 1));
@@ -562,7 +568,7 @@ function removeSel() {
 }
 function duplicateSel() {
   const { kind, i } = S.sel || {};
-  if (!kind || ['end', 'bg0', 'lay0', 'brand', 'audio', 'music'].includes(kind)) return;
+  if (!kind || ['end', 'bg0', 'lay0', 'brand', 'audio', 'music', 'device'].includes(kind)) return;
   const src = clone(listOf(kind)[i]);
   const [a, b] = itemRange(kind, src, i);
   const shift = round(b - a);
@@ -953,7 +959,7 @@ function rows() {
   const v = V(), end = END(), dur = DUR();
   const hs = sortedHeads();
   const R = [];
-  R.push({ key: 'head', label: 'Tekst', icon: 'title', items: hs.map((x, k) => ({ kind: 'head', i: x.i, s: x.h.t, e: hs[k + 1]?.h.t ?? end, text: plain(x.h.text), cls: x.h.hook ? 'hook' : '', noResize: true })) });
+  R.push({ key: 'head', label: 'Tekst', icon: 'title', items: hs.map((x, k) => ({ kind: 'head', i: x.i, s: x.h.t, e: hs[k + 1]?.h.t ?? end, text: plain(x.h.text), cls: x.h.hook ? 'hook' : '', noResize: true, kf: kfList(x.h.kf, (hs[k + 1]?.h.t ?? end) - x.h.t).map(f => f.t) })) });
   const clipRow = (kind, label) => ({ key: kind, label, icon: 'smartphone', items: (v[kind] || []).map((c, i) => ({ kind, i, s: c.start, e: c.start + c.dur, text: `${c.src.replace(/\.\w+$/, '')}${c.rate && c.rate !== 1 ? ` ×${c.rate}` : ''}`, ic: 'movie', kf: kfStarts(c) })) });
   const devName = { phone: 'Telefoon', dual: 'Telefoon 1', tablet: 'Tablet', browser: 'Browser', full: 'Beeld' }[layoutOf(v)];
   R.push(clipRow('clips', devName));
@@ -964,7 +970,7 @@ function rows() {
     let lane = lanes.findIndex(e => e <= c.t + 0.001);
     if (lane < 0) { lane = lanes.length; lanes.push(0); }
     lanes[lane] = c.out;
-    return { kind: 'chips', i, s: c.t, e: c.out, text: `${c.label} · ${c.text}`, ic: c.icon, cls: `c-${c.color}`, lane };
+    return { kind: 'chips', i, s: c.t, e: c.out, text: `${c.label} · ${c.text}`, ic: c.icon, cls: `c-${c.color}`, lane, kf: kfList(c.kf, c.out - c.t).map(f => f.t) };
   });
   R.push({ key: 'chips', label: 'Callouts', icon: 'sell', lanes: Math.max(1, lanes.length), items: chipItems });
   R.push({ key: 'zoom', label: 'Zoom', icon: 'zoom_in', items: v.zooms.map((z, i) => ({ kind: 'zoom', i, s: z.t, e: z.out ?? end, text: `×${z.scale}`, ramp: z.dur })) });
@@ -1391,8 +1397,10 @@ function renderInspector() {
       selectField('Komt binnen', headInOf(it), Object.entries(headIns).map(([id, e]) => [id, e.label]), (x, v) => { if (x === 'rise') delete v.heads[i].fxIn; else v.heads[i].fxIn = x; }),
       selectField('Gaat weg', headOutOf(it), Object.entries(headOuts).map(([id, e]) => [id, e.label]), (x, v) => { if (x === 'lift') delete v.heads[i].fxOut; else v.heads[i].fxOut = x; })),
     el('button', { class: 'ghost', title: 'Gebruik dit binnenkomen en weggaan voor alle teksten', onclick: () => commit(v => { for (const h of v.heads) { const a = v.heads[i]; if (a.fxIn) h.fxIn = a.fxIn; else delete h.fxIn; if (a.fxOut) h.fxOut = a.fxOut; else delete h.fxOut; } }) }, icon('done_all'), 'Voor alle teksten'),
+    ...keyframeControls('head', i, it),
     actions()
   ];
+  else if (k === 'device') content = [head('devices', 'Apparaatanimatie'), ...keyframeControls('device', 0, V().deviceMotion || {}), el('button', { class: 'ghost', onclick: () => select(null, false) }, icon('arrow_back'), 'Terug naar video')];
   else if (k === 'clips' || k === 'clips2') content = clipPanel(k, i, it);
   else if (k === 'chips') content = chipPanel(i, it);
   else if (k === 'zoom') content = [
@@ -1551,6 +1559,9 @@ function videoPanel() {
   const layout = startLayout();
   return [
     head('movie', v.id),
+    el('div', { class: 'insp-actions' },
+      el('button', { onclick: saveAsTemplate }, icon('bookmark_add'), 'Opslaan als template'),
+      deviceOf(v) !== 'text' ? el('button', { onclick: () => select({ kind: 'device', i: 0 }, false) }, icon('animation'), 'Apparaat animeren') : null),
     field('Bovenregel', v.overline, (x, v) => (v.overline = x), { live: x => liveTail('overline', `${brandOf().name}${x ? ` · ${x}` : ''}`) }),
     el('label', { class: 'field' }, el('span', {}, 'Merk'),
       el('div', { class: 'path-row' },
@@ -2180,30 +2191,109 @@ const transitionLength = c => { const t = (S.transitions || {})[c.tr]; return t 
 const kfStarts = c => (c.kf?.length ? kfList(c.kf, c.dur).map(k => k.t + transitionLength(c)) : []);
 
 function keyframeControls(k, i, c) {
-  const start = transitionLength(c);
+  const range = animationRange(k, i), start = range.start, max = range.duration;
+  const cur = v => k === 'device' ? (v.deviceMotion ||= {}) : v[k === 'head' ? 'heads' : k][i];
   const add = () => {
-    const t = round(Math.max(0, Math.min(S.t - c.start - start, c.dur - start)));
+    const t = round(Math.max(0, Math.min(S.t - start, max)));
     const at = kfAt(c.kf, t);
-    commit(v => { const cur = v[k][i]; cur.kf = [...(cur.kf || []), { t, ...at, ease: kfDefaultEase }]; });
+    commit(v => { const item = cur(v); item.kf = putKeyframe(item.kf, t, at); });
     renderInspector();
   };
   const row = (kf, j) => {
-    const set = (prop, label, opts) => field(label, kf[prop] ?? kfFull(kf)[prop], (x, v) => { v[k][i].kf[j][prop] = x; }, { type: 'number', key: `kf${j}${prop}${k}${i}`, ...opts });
-    return el('div', { class: `kf-row${Math.abs(S.t - c.start - start - kf.t) < 0.02 ? ' now' : ''}` },
+    const set = (prop, label, opts) => field(label, kf[prop] ?? kfFull(kf)[prop], (x, v) => { cur(v).kf[j][prop] = Math.max(opts?.min ?? -Infinity, Math.min(opts?.max ?? Infinity, x)); }, { type: 'number', key: `kf${j}${prop}${k}${i}`, ...opts });
+    return el('div', { class: `kf-row${Math.abs(S.t - start - kf.t) < 0.02 ? ' now' : ''}` },
       el('div', { class: 'kf-head' },
-        el('button', { class: 'ghost', title: 'Naar dit keyframe', onclick: () => seek(c.start + start + kf.t) }, el('i', { class: 'kf-dia' }), `${(+kf.t).toFixed(2)}s`),
-        el('button', { class: 'ghost', title: 'Keyframe verwijderen', onclick: () => { commit(v => { const cur = v[k][i]; cur.kf.splice(j, 1); if (!cur.kf.length) delete cur.kf; }); renderInspector(); } }, icon('close'))),
-      el('div', { class: 'field-row' }, set('t', 'Tijd (s)', { step: 0.05, min: 0 }), selectField('Beweging naar dit punt', kfEases[kf.ease] ? kf.ease : kfDefaultEase, Object.entries(kfEases).map(([id, e]) => [id, e.label]), (x, v) => { v[k][i].kf[j].ease = x; })),
+        el('button', { class: 'ghost', title: 'Naar dit keyframe', onclick: () => seek(start + kf.t) }, el('i', { class: 'kf-dia' }), `${(+kf.t).toFixed(2)}s`),
+        el('button', { class: 'ghost', title: 'Keyframe verwijderen', onclick: () => { commit(v => { const item = cur(v); item.kf.splice(j, 1); if (!item.kf.length) delete item.kf; }); renderInspector(); } }, icon('close'))),
+      el('div', { class: 'field-row' }, set('t', 'Tijd (s)', { step: 0.05, min: 0, max }), selectField('Beweging naar dit punt', kfEases[kf.ease] ? kf.ease : kfDefaultEase, Object.entries(kfEases).map(([id, e]) => [id, e.label]), (x, v) => { cur(v).kf[j].ease = x; })),
       el('div', { class: 'field-row' }, set('x', 'X (px)', { step: 10 }), set('y', 'Y (px)', { step: 10 })),
       el('div', { class: 'field-row three' }, set('s', 'Schaal', { step: 0.05, min: 0.05 }), set('r', 'Rotatie (°)', { step: 5 }), set('o', 'Dekking', { step: 0.1, min: 0, max: 1 })));
   };
-  return [el('div', { class: 'insp-section' },
+  return [el('div', { class: 'insp-section motion-panel', 'data-motion-kind': k },
     el('h3', {}, 'Animatie (keyframes)'),
-    el('p', { class: 'hint' }, 'Zet de playhead in de clip en klik op het knopje: het huidige beeld wordt een keyframe. Verander de waarden, of voeg er verderop nog een toe, en de clip beweegt ertussen. Met een overgang beginnen de keyframes pas als die klaar is.'),
+    el('div', { class: 'motion-presets' }, ...Object.entries(motionPresets).map(([id, p]) => el('button', { 'data-preset': id, title: p.label, onclick: () => {
+      if (c.kf?.length && !confirm('Bestaande keyframes vervangen door deze preset?')) return;
+      commit(v => { cur(v).kf = presetKeyframes(id, max); }); seek(start + Math.min(0.8, max / 2));
+    } }, icon(p.icon), p.label))),
+    el('button', { class: `motion-edit${S.motionEdit ? ' on' : ''}`, 'aria-pressed': !!S.motionEdit, onclick: () => {
+      S.motionEdit = !S.motionEdit; S.player?.pause();
+      if (S.motionEdit && (S.t < start + 0.1 || S.t >= start + max)) seek(start + Math.min(k === 'device' ? 2 : 0.8, max / 2));
+      renderInspector(); drawMotionBox();
+    } }, icon('open_with'), S.motionEdit ? 'Klaar met preview bewerken' : 'Bewerken in preview'),
+    el('p', { class: 'hint' }, 'Sleep het kader om te verplaatsen. Gebruik de hoek om te vergroten en het ronde handvat om te draaien. Elke wijziging maakt een keyframe op de playhead. Keyframes gelden voor alle formaten.'),
+    el('p', { class: 'hint motion-time' }, `${max.toFixed(2)} s · ${Math.max(0, Math.min(max, S.t - start)).toFixed(2)} s`),
     ...(c.kf || []).map((kf, j) => [kf, j]).sort((a, b) => a[0].t - b[0].t).map(([kf, j]) => row(kf, j)),
     el('div', { class: 'insp-actions' },
       el('button', { onclick: add }, icon('add'), 'Keyframe op de playhead'),
-      c.kf?.length ? el('button', { class: 'ghost', onclick: () => { commit(v => { delete v[k][i].kf; }); renderInspector(); } }, icon('delete_sweep'), 'Alles wissen') : null))];
+      c.kf?.length ? el('button', { class: 'ghost', onclick: () => { commit(v => { delete cur(v).kf; }); renderInspector(); } }, icon('delete_sweep'), 'Alles wissen') : null))];
+}
+
+function animationRange(kind, i) {
+  const r = motionRange(V(), kind, i);
+  if (kind === 'clips' || kind === 'clips2') { const d = transitionLength(V()[kind][i]); r.start += d; r.duration = Math.max(0.01, r.duration - d); }
+  return r;
+}
+function motionSubject(doc = $('.pv.front')?.contentDocument) {
+  const { kind, i } = S.sel || {};
+  if (!doc || !['head', 'chips', 'clips', 'clips2', 'device'].includes(kind)) return null;
+  const id = kind === 'head' ? `${headId(i)}-motion` : kind === 'chips' ? `chip${i}-motion` : kind === 'device' ? 'phone-motion' : `${S.id}-${kind === 'clips2' ? 'clip2-' : 'clip'}${i}-motion`;
+  const node = doc.getElementById(id), item = kind === 'device' ? V().deviceMotion || {} : listOf(kind)?.[i];
+  return node && item ? { node, item, kind, i, ...animationRange(kind, i) } : null;
+}
+function drawMotionBox(doc = $('.pv.front')?.contentDocument) {
+  if (!doc || S.motionDragging) return;
+  let box = doc.getElementById('ms-motion-box');
+  const subject = S.motionEdit && motionSubject(doc);
+  if (!subject || S.t < subject.start || S.t > subject.start + subject.duration) { box?.remove(); return; }
+  const r = subject.node.getBoundingClientRect();
+  if (!r.width || !r.height) { box?.remove(); return; }
+  if (!box) {
+    box = doc.createElement('div'); box.id = 'ms-motion-box'; box.setAttribute('aria-label', tr('Animatie verplaatsen'));
+    box.innerHTML = '<button type="button" data-handle="scale" aria-label="' + tr('Animatie vergroten') + '"></button><button type="button" data-handle="rotate" aria-label="' + tr('Animatie draaien') + '"></button>';
+    const style = doc.createElement('style'); style.textContent = '#ms-motion-box{position:fixed;box-sizing:border-box;border:4px solid #ffb77d;z-index:2147483647;cursor:move;touch-action:none;pointer-events:auto}#ms-motion-box button{position:absolute;width:30px;height:30px;background:#ffb77d;border:4px solid #17202a;padding:0;cursor:crosshair;touch-action:none}#ms-motion-box [data-handle=scale]{right:-16px;bottom:-16px}#ms-motion-box [data-handle=rotate]{left:calc(50% - 15px);top:-55px;border-radius:50%}#ms-motion-box [data-handle=rotate]:after{content:"";position:absolute;height:25px;width:3px;background:#ffb77d;left:10px;top:25px}';
+    doc.head.append(style); doc.body.append(box);
+  }
+  placeMotionBox(box, r, doc);
+}
+function placeMotionBox(box, r, doc) {
+  // Keep the handles reachable when a subject extends beyond the output frame.
+  const w = doc.documentElement.clientWidth, h = doc.documentElement.clientHeight;
+  const left = Math.max(16, Math.min(w - 48, r.left)), top = Math.max(60, Math.min(h - 48, r.top));
+  const right = Math.max(left + 24, Math.min(w - 16, r.right)), bottom = Math.max(top + 24, Math.min(h - 16, r.bottom));
+  Object.assign(box.style, { left: `${left}px`, top: `${top}px`, width: `${right - left}px`, height: `${bottom - top}px` });
+}
+function dragMotion(doc, e) {
+  if (e.button !== 0) return;
+  const s = motionSubject(doc); if (!s) return;
+  e.preventDefault(); S.player?.pause(); S.motionDragging = true;
+  e.target.setPointerCapture?.(e.pointerId);
+  const time = Math.max(0, Math.min(s.duration, S.t - s.start)), before = kfAt(s.item.kf, time), pose = { ...before };
+  const handle = e.target.dataset.handle || 'move', rect = s.node.getBoundingClientRect(), cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+  const distance = Math.max(1, Math.hypot(e.clientX - cx, e.clientY - cy)), angle = Math.atan2(e.clientY - cy, e.clientX - cx);
+  // Translate in the subject's parent coordinates, including format scale, device zoom and rotation.
+  let matrix = new doc.defaultView.DOMMatrix();
+  for (let n = s.node.parentElement; n; n = n.parentElement) { const tr = doc.defaultView.getComputedStyle(n).transform; if (tr !== 'none') matrix = new doc.defaultView.DOMMatrix(tr).multiply(matrix); }
+  const inv = matrix.inverse();
+  let moved = false;
+  const move = ev => {
+    const dx = ev.clientX - e.clientX, dy = ev.clientY - e.clientY;
+    if (Math.hypot(dx, dy) < 2 && !moved) return;
+    moved = true;
+    if (handle === 'scale') pose.s = Math.max(0.05, Math.min(10, before.s * Math.hypot(ev.clientX - cx, ev.clientY - cy) / distance));
+    else if (handle === 'rotate') { const diff = Math.atan2(ev.clientY - cy, ev.clientX - cx) - angle; pose.r = before.r + Math.atan2(Math.sin(diff), Math.cos(diff)) * 180 / Math.PI; }
+    else { pose.x = before.x + inv.a * dx + inv.c * dy; pose.y = before.y + inv.b * dx + inv.d * dy; }
+    doc.defaultView.gsap.set(s.node, { x: pose.x, y: pose.y, scale: pose.s, rotation: pose.r, opacity: pose.o });
+    const r = s.node.getBoundingClientRect(), box = doc.getElementById('ms-motion-box');
+    if (box) placeMotionBox(box, r, doc);
+  };
+  const end = ev => {
+    doc.removeEventListener('pointermove', move); doc.removeEventListener('pointerup', end); doc.removeEventListener('pointercancel', end);
+    S.motionDragging = false;
+    if (moved && ev.type !== 'pointercancel') commit(v => { const item = s.kind === 'device' ? (v.deviceMotion ||= {}) : v[s.kind === 'head' ? 'heads' : s.kind][s.i]; item.kf = putKeyframe(item.kf, time, pose, { anchor: true }); });
+    else doc.defaultView.gsap.set(s.node, { x: before.x, y: before.y, scale: before.s, rotation: before.r, opacity: before.o });
+    renderInspector(); drawMotionBox(doc);
+  };
+  doc.addEventListener('pointermove', move); doc.addEventListener('pointerup', end); doc.addEventListener('pointercancel', end);
 }
 
 function clipPanel(k, i, c) {
@@ -2289,6 +2379,7 @@ function chipPanel(i, c) {
     c.count != null ? el('div', { class: 'field-row' },
       field('Telt tot', c.count, (x, v) => (v.chips[i].count = x), { type: 'number', step: 1, after: refresh }),
       field('Achtervoegsel', c.suffix, (x, v) => (v.chips[i].suffix = x), { after: refresh })) : null,
+    ...keyframeControls('chips', i, c),
     actions()
   ];
 }
@@ -2453,7 +2544,7 @@ function showShortcuts() {
 }
 function buildMenus() {
   const hasV = () => !!V();
-  const item = S => S && S.kind !== 'brand' && S.kind !== 'end';
+  const item = S => S && !['brand', 'end', 'device'].includes(S.kind);
   const canRemove = () => hasV() && item(S.sel) && !!selItem();
   const canDup = () => canRemove() && !['audio', 'music'].includes(S.sel.kind);
   const step = d => () => { S.player?.pause(); seek(S.t + d); };
@@ -2463,6 +2554,8 @@ function buildMenus() {
     { label: 'Bestand', items: () => [
       { label: 'Nieuwe video…', key: 'Ctrl+N', icon: 'add', run: () => newVideo(), disabled: !S.workspace },
       { label: 'Video dupliceren…', key: 'Ctrl+Shift+D', icon: 'content_copy', run: () => newVideo(S.id), disabled: !hasV() },
+      { label: 'Opslaan als template…', icon: 'bookmark_add', run: saveAsTemplate, disabled: !hasV() },
+      { label: 'Eigen templates…', icon: 'dashboard_customize', run: manageTemplates, disabled: !S.workspace },
       { label: 'Video verwijderen…', icon: 'delete', run: () => deleteVideo(), disabled: !hasV() },
       { sep: true },
       { label: 'Projecten…', key: 'Ctrl+O', icon: 'folder_open', run: openProjects },
@@ -2600,19 +2693,106 @@ function blankSpec(brandId, layout = 'phone') {
     chips: [], zooms: [], tagline: t.tagline
   };
 }
-function newVideo(baseId) {
+function templateDialog(id, title) {
+  document.getElementById(id)?.remove();
+  const form = el('form', { method: 'dialog' }, el('h2', {}, title));
+  const dlg = el('dialog', { id, class: 'template-dialog' }, form);
+  dlg.addEventListener('close', () => dlg.remove(), { once: true });
+  document.body.append(dlg);
+  return { dlg, form };
+}
+function templateId(name) { return name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48) || 'template'; }
+function saveAsTemplate() {
+  if (!V()) return;
+  const spec = clone(V()), fields = templateFields(spec), { dlg, form } = templateDialog('dlg-template-save', 'Opslaan als template');
+  const name = el('input', { name: 'templateName', required: true, maxLength: 120, value: plain(spec.overline) || S.id });
+  const description = el('textarea', { name: 'description', rows: 2, maxLength: 500, placeholder: 'Waarvoor gebruik je deze template?' });
+  const choices = fields.map(f => el('label', { class: 'template-field-choice' },
+    el('input', { type: 'checkbox', checked: true, 'data-key': f.key }),
+    el('span', {}, el('b', {}, tr(f.label)), el('small', { class: 'no-i18n' }, f.value))));
+  const error = el('p', { class: 'error', role: 'alert' });
+  const submit = el('button', { value: 'ok', class: 'primary' }, 'Template opslaan');
+  form.append(el('p', { class: 'hint' }, 'De montage, vormgeving en animaties blijven bewaard. Kies wat je bij een volgende video wilt vervangen.'),
+    el('label', {}, 'Naam', name), el('label', {}, 'Beschrijving', description),
+    el('h3', {}, 'Vervangbare inhoud'),
+    el('div', { class: 'template-field-list' }, ...(choices.length ? choices : [el('p', { class: 'hint' }, 'Deze video heeft nog geen teksten of clips.') ])),
+    el('p', { class: 'hint' }, 'Templates worden in dit project bewaard en gebruiken de media uit deze projectmap.'), error,
+    el('div', { class: 'dlg-actions' }, el('button', { value: 'cancel', formnovalidate: true, class: 'ghost' }, 'Annuleren'), submit));
+  form.addEventListener('submit', async e => {
+    if (e.submitter?.value !== 'ok') return;
+    e.preventDefault(); submit.disabled = true;
+    let id = templateId(name.value), n = 2; const base = id;
+    while ((S.templates || []).some(t => t.id === id)) id = `${base}-${n++}`;
+    try {
+      await api('/api/templates', { method: 'POST', body: JSON.stringify({ id, name: name.value, description: description.value, spec, fields: [...form.querySelectorAll('[data-key]:checked')].map(c => c.dataset.key) }) });
+      await loadState(); dlg.close(); toast('Template opgeslagen');
+    } catch (e) { error.textContent = e.message; submit.disabled = false; }
+  });
+  dlg.showModal(); name.select();
+}
+function editTemplate(t) {
+  const { dlg, form } = templateDialog('dlg-template-edit', 'Template bewerken');
+  const name = el('input', { required: true, maxLength: 120, value: t.name }), description = el('textarea', { rows: 3, maxLength: 500 }); description.value = t.description;
+  const error = el('p', { class: 'error', role: 'alert' });
+  form.append(el('label', {}, 'Naam', name), el('label', {}, 'Beschrijving', description), error,
+    el('div', { class: 'dlg-actions' }, el('button', { value: 'cancel', formnovalidate: true, class: 'ghost' }, 'Annuleren'), el('button', { value: 'ok', class: 'primary' }, 'Opslaan')));
+  form.addEventListener('submit', async e => {
+    if (e.submitter?.value !== 'ok') return; e.preventDefault();
+    try { await api(`/api/templates/${t.id}`, { method: 'PUT', body: JSON.stringify({ name: name.value, description: description.value }) }); await loadState(); dlg.close(); manageTemplates(); }
+    catch (e) { error.textContent = e.message; }
+  }); dlg.showModal(); name.select();
+}
+function manageTemplates() {
+  const { dlg, form } = templateDialog('dlg-templates', 'Eigen templates');
+  form.append(el('p', { class: 'hint' }, 'Je eigen startpunten voor dit project. Teksten en clips vervang je bij het aanmaken van een video.'));
+  const list = el('div', { class: 'template-library' });
+  for (const t of S.templates || []) list.append(el('article', { class: 'template-entry' },
+    el('div', { class: 'template-entry-copy' }, el('b', { class: 'no-i18n' }, t.name), el('p', { class: 'no-i18n' }, t.description || ''), el('small', {}, `${t.spec.dur ?? 15} s · ${tr(S.layouts[t.spec.layout] || 'Telefoon')} · ${templateSlots(t).length} ${tr('invulvelden')}`)),
+    el('div', { class: 'insp-actions' },
+      el('button', { type: 'button', class: 'primary', onclick: () => { dlg.close(); newVideo(null, t.id); } }, icon('add'), 'Gebruiken'),
+      el('button', { type: 'button', class: 'ghost', title: 'Template bewerken', onclick: () => { dlg.close(); editTemplate(t); } }, icon('edit')),
+      el('button', { type: 'button', class: 'ghost danger', title: 'Template verwijderen', onclick: async () => {
+        if (!confirm(`Template "${t.name}" verwijderen? Bestaande video's en media blijven bewaard.`)) return;
+        try { await api(`/api/templates/${t.id}`, { method: 'DELETE' }); await loadState(); dlg.close(); manageTemplates(); } catch (e) { toast(e.message, true); }
+      } }, icon('delete')))));
+  if (!list.childElementCount) list.append(el('p', { class: 'hint' }, 'Nog geen eigen templates. Open een video en kies Opslaan als template.'));
+  form.append(list, el('div', { class: 'dlg-actions' }, V() ? el('button', { type: 'button', onclick: () => { dlg.close(); saveAsTemplate(); } }, icon('bookmark_add'), 'Huidige video bewaren') : null, el('button', { value: 'close', class: 'ghost' }, 'Sluiten')));
+  dlg.showModal();
+}
+function newVideo(baseId, templateId) {
   if (!S.workspace) return openProjects();
   const dlg = $('#dlg-new'), form = dlg.querySelector('form');
   // Starter cards; picking a video to copy switches them off, picking a card clears the copy.
-  let starter = baseId ? null : 'launch';
-  const cards = [['', { label: 'Leeg', hint: 'Alleen een kop en je eerste clip.', icon: 'draft' }], ...Object.entries(starters)].map(([id, st]) =>
+  let starter = templateId ? `saved:${templateId}` : baseId ? null : 'launch';
+  let slotsFor = null, slotValues = {};
+  const slots = $('#template-inputs');
+  const own = (S.templates || []).map(t => [`saved:${t.id}`, { label: t.name, hint: t.description || `${t.spec.dur ?? 15} s · ${tr(S.layouts[t.spec.layout] || 'Telefoon')}`, icon: 'bookmark', saved: true }]);
+  const cards = [...own, ['', { label: 'Leeg', hint: 'Alleen een kop en je eerste clip.', icon: 'draft' }], ...Object.entries(starters)].map(([id, st]) =>
     el('button', { type: 'button', class: 'tpl', role: 'radio', 'data-id': id, onclick: () => { starter = id; form.base.value = ''; form.base.dispatchEvent(new Event('change')); paint(); } },
-      icon(st.icon), el('b', {}, st.label), el('small', {}, st.hint)));
+      icon(st.icon), el('b', { class: st.saved ? 'no-i18n' : '' }, st.label), el('small', { class: st.saved ? 'no-i18n' : '' }, st.hint), st.saved ? el('span', { class: 'template-badge' }, 'Eigen template') : null));
   const paint = () => {
     cards.forEach(c => { const on = !form.base.value && c.dataset.id === starter; c.classList.toggle('on', on); c.setAttribute('aria-checked', on); });
     $('#tpl-grid').classList.toggle('off', !!form.base.value);
+    const t = !form.base.value && starter?.startsWith('saved:') && S.templates.find(t => t.id === starter.slice(6));
+    slots.hidden = !t;
+    if (slotsFor !== (t?.id || null)) {
+      slotsFor = t?.id || null; slotValues = {};
+      slots.replaceChildren();
+      if (t) {
+        slots.append(el('h3', {}, 'Vul je template in'), el('p', { class: 'hint' }, 'Pas de teksten aan en kies je clips. De timing en animaties worden overgenomen.'));
+        for (const f of templateSlots(t)) {
+          const input = f.type === 'clip' ? el('select', {}, el('option', { value: '' }, 'Kies een clip…'), ...S.clips.map(src => el('option', { value: src }, src))) : el('textarea', { rows: 2, maxLength: 10000 });
+          input.dataset.slot = f.key;
+          input.value = f.type === 'clip' && !S.clips.includes(f.value) ? '' : f.value;
+          slotValues[f.key] = input.value;
+          const update = () => { slotValues[f.key] = input.value; };
+          input.addEventListener('input', update); input.addEventListener('change', update);
+          slots.append(el('label', {}, tr(f.label), input));
+        }
+      }
+    }
     const taken = new Set(S.list.map(v => v.id));
-    if (!form.id.dataset.touched && !form.base.value) { let id = starter || 'video', n = 1; while (taken.has(n > 1 ? `${id}-${n}` : id)) n++; form.id.value = n > 1 ? `${id}-${n}` : id; }
+    if (!form.id.dataset.touched && !form.base.value) { let id = t?.id || starter || 'video', n = 1; while (taken.has(n > 1 ? `${id}-${n}` : id)) n++; form.id.value = n > 1 ? `${id}-${n}` : id; }
   };
   $('#tpl-grid').replaceChildren(...cards);
   form.base.replaceChildren(el('option', { value: '' }, 'Geen'), ...S.list.map(v => el('option', { value: v.id }, v.id)));
@@ -2631,11 +2811,12 @@ function newVideo(baseId) {
     e.preventDefault();
     try {
       const b = S.brands.find(x => x.id === form.brand.value) || {};
-      const spec = form.base.value ? await api(`/api/videos/${form.base.value}`)
+      const saved = !form.base.value && starter?.startsWith('saved:') && starter.slice(6);
+      const spec = saved ? null : form.base.value ? await api(`/api/videos/${form.base.value}`)
         : starter ? starterSpec(starter, { brandId: form.brand.value, brandName: b.name, lang: b.lang, clips: S.clips, clipDur: S.clipDur, dev: S.devs || {} })
         : blankSpec(form.brand.value, V() ? layoutOf() : 'phone');
-      spec.brand = form.brand.value;
-      const made = await api('/api/videos', { method: 'POST', body: JSON.stringify({ id: form.id.value.trim(), spec }) });
+      if (spec) spec.brand = form.brand.value;
+      const made = await api('/api/videos', { method: 'POST', body: JSON.stringify({ id: form.id.value.trim(), spec, ...(saved && { template: saved, values: slotValues, brand: form.brand.value }) }) });
       dlg.close();
       await loadState();
       openVideo(made.id);

@@ -15,6 +15,36 @@ export const kfEases = {
   'steps(1)': { label: 'Sprong', fn: p => (p >= 1 ? 1 : 0) }
 };
 export const kfDefaultEase = 'power2.inOut';
+export const motionPresets = {
+  zoom: { label: 'Rustig inzoomen', icon: 'zoom_in', poses: [{ s: 1 }, { s: 1.18 }] },
+  rise: { label: 'Binnenvliegen', icon: 'north_east', poses: [{ x: -90, y: 60, o: 0 }, { x: 0, y: 0, o: 1 }] },
+  pop: { label: 'Stuiteren', icon: 'animation', poses: [{ s: 0.65 }, { s: 1, ease: 'back.out(1.7)' }] },
+  drift: { label: 'Zweven', icon: 'air', poses: [{ y: 0 }, { y: -35 }, { y: 0 }] },
+  turn: { label: 'Draaien', icon: 'rotate_right', poses: [{ r: -8 }, { r: 8 }] }
+};
+export function presetKeyframes(id, duration) {
+  const p = motionPresets[id];
+  if (!p) return [];
+  const d = Math.max(0.01, Number(duration) || 1);
+  return p.poses.map((pose, i) => ({ t: +(d * i / (p.poses.length - 1)).toFixed(3), ...kfNeutral, ease: kfDefaultEase, ...pose }));
+}
+// Keep one pose per frame, including a neutral start when the first edit is later in the subject.
+export function putKeyframe(list, t, pose, { anchor = false } = {}) {
+  const ks = kfList(list).filter(k => Math.abs(k.t - t) >= 1 / 60);
+  if (anchor && !ks.length && t > 1 / 60) ks.push({ t: 0, ...kfNeutral, ease: kfDefaultEase });
+  ks.push({ t: +t.toFixed(3), ...kfFull(pose), ease: pose.ease || kfDefaultEase });
+  return ks.sort((a, b) => a.t - b.t);
+}
+export function motionRange(v, kind, i = 0) {
+  const end = v.outro === 'off' ? (v.dur ?? 15) : Math.min(v.end ?? 12.6, v.dur ?? 15);
+  if (kind === 'device') return { start: 0, duration: end };
+  if (kind === 'head') {
+    const h = v.heads[i], next = v.heads.filter(n => n.t > h.t).sort((a, b) => a.t - b.t)[0];
+    return { start: h.t, duration: Math.max(0.01, Math.min(end, next?.t ?? end) - h.t) };
+  }
+  const c = v[kind][i];
+  return { start: c.start ?? c.t, duration: c.dur ?? Math.max(0.01, c.out - c.t) };
+}
 const easeFn = e => (kfEases[e] || kfEases[kfDefaultEase]).fn;
 
 const num = (n, d) => (Number.isFinite(+n) && n !== null && n !== '' ? +n : d);

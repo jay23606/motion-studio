@@ -10,6 +10,7 @@ import { basename, extname, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { build, normalize, formats, formatOf } from './template.mjs';
+import { makeTemplate } from './user-templates.mjs';
 
 export const APP_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const SKELETON = join(APP_ROOT, 'resources', 'workspace');
@@ -49,7 +50,7 @@ export class Workspace {
     if (!isWorkspace(root)) throw new Error(`Geen Motion Studio-project: ${root}`);
     this.root = root;
     this.p = {
-      specs: join(root, 'specs'), brands: join(root, 'brands'), assets: join(root, 'assets'),
+      specs: join(root, 'specs'), templates: join(root, 'templates'), brands: join(root, 'brands'), assets: join(root, 'assets'),
       clips: join(root, 'assets', 'clips'), vo: join(root, 'assets', 'vo'), fonts: join(root, 'assets', 'fonts'),
       brandAssets: join(root, 'assets', 'brand'), renders: join(root, 'renders'), projects: join(root, 'projects'), voCache: join(root, 'vo')
     };
@@ -67,6 +68,11 @@ export class Workspace {
   hasSpec(id) { return existsSync(this.specFile(id)); }
   readSpec(id) { return JSON.parse(readFileSync(this.specFile(id), 'utf8')); }
   writeSpec(id, v) { writeJson(this.specFile(id), { ...v, id }); }
+  templateFile(id) { return join(this.p.templates, `${id}.json`); }
+  templates() { return readdirSync(this.p.templates).filter(f => f.endsWith('.json')).map(f => readJson(join(this.p.templates, f), null)).filter(t => t?.version === 1 && t.spec && Array.isArray(t.fields)).sort((a, b) => a.name.localeCompare(b.name)); }
+  readTemplate(id) { return readJson(this.templateFile(id), null); }
+  writeTemplate(id, v, meta) { const t = { ...makeTemplate(v, meta), id }; writeJson(this.templateFile(id), t); return t; }
+  trashTemplate(id) { const dir = join(this.p.templates, '.trash'); mkdirSync(dir, { recursive: true }); renameSync(this.templateFile(id), join(dir, `${id}-${Date.now()}.json`)); }
   specs() { return readdirSync(this.p.specs).filter(f => f.endsWith('.json')).map(f => readJson(join(this.p.specs, f), null)).filter(Boolean); }
   trashSpec(id) {
     const trash = join(this.p.specs, '.trash');

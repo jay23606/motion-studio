@@ -7,6 +7,27 @@
 export const languages = { nl: 'Nederlands', en: 'English' };
 
 const en = {
+  'Opslaan als template': 'Save as template', 'Opslaan als template…': 'Save as template…', 'Eigen templates…': 'My templates…',
+  'Eigen templates': 'My templates', 'Eigen template': 'My template', 'Template opslaan': 'Save template', 'Template opgeslagen': 'Template saved',
+  'Naam': 'Name', 'Beschrijving': 'Description', 'Vervangbare inhoud': 'Replaceable content', 'invulvelden': 'fields',
+  'Waarvoor gebruik je deze template?': 'What will you use this template for?',
+  'De montage, vormgeving en animaties blijven bewaard. Kies wat je bij een volgende video wilt vervangen.': 'Keep the edit, design and animations. Choose what to replace for your next video.',
+  'Templates worden in dit project bewaard en gebruiken de media uit deze projectmap.': 'Templates are saved in this project and use media from its folder.',
+  'Deze video heeft nog geen teksten of clips.': 'This video has no text or clips yet.',
+  'Je eigen startpunten voor dit project. Teksten en clips vervang je bij het aanmaken van een video.': 'Your own starting points for this project. Replace text and clips when creating a video.',
+  'Nog geen eigen templates. Open een video en kies Opslaan als template.': 'No templates yet. Open a video and choose Save as template.',
+  'Huidige video bewaren': 'Save current video', 'Gebruiken': 'Use', 'Template bewerken': 'Edit template', 'Template verwijderen': 'Delete template',
+  'Template "{0}" verwijderen? Bestaande video\'s en media blijven bewaard.': 'Delete template "{0}"? Existing videos and media are kept.',
+  'Vul je template in': 'Fill in your template', 'Kies een clip…': 'Choose a clip…',
+  'Pas de teksten aan en kies je clips. De timing en animaties worden overgenomen.': 'Change the text and choose your clips. Timing and animations are preserved.',
+  'Tekst {0}': 'Text {0}', 'Clip {0}': 'Clip {0}', 'Voice-over {0}': 'Voice-over {0}', 'Ondertitel {0}': 'Caption {0}',
+  'Callout {0} · label': 'Callout {0} · label', 'Callout {0} · tekst': 'Callout {0} · text',
+  'Afsluiting': 'Closing text', 'Apparaat animeren': 'Animate device', 'Apparaatanimatie': 'Device animation', 'Terug naar video': 'Back to video',
+  'Rustig inzoomen': 'Slow zoom', 'Binnenvliegen': 'Fly in', 'Stuiteren': 'Bounce', 'Zweven': 'Float', 'Draaien': 'Rotate',
+  'Bestaande keyframes vervangen door deze preset?': 'Replace existing keyframes with this preset?',
+  'Bewerken in preview': 'Edit in preview', 'Klaar met preview bewerken': 'Finish editing preview',
+  'Animatie verplaatsen': 'Move animation', 'Animatie vergroten': 'Scale animation', 'Animatie draaien': 'Rotate animation',
+  'Sleep het kader om te verplaatsen. Gebruik de hoek om te vergroten en het ronde handvat om te draaien. Elke wijziging maakt een keyframe op de playhead. Keyframes gelden voor alle formaten.': 'Drag the frame to move. Use the corner to scale and the round handle to rotate. Each change creates a keyframe at the playhead. Keyframes apply to all formats.',
   // ---------- menu bar ----------
   'Bestand': 'File', 'Bewerken': 'Edit', 'Invoegen': 'Insert', 'Beeld': 'View', 'Afspelen': 'Playback', 'Exporteren': 'Export', 'Help': 'Help',
   'Nieuwe video…': 'New video…', 'Video dupliceren…': 'Duplicate video…', 'Video verwijderen…': 'Delete video…', 'Projecten…': 'Projects…',

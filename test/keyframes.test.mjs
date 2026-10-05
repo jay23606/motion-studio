@@ -1,6 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { kfAt, kfList, kfPlan, kfEases, kfNeutral } from '../src/keyframes.mjs';
+import { motionPresets, presetKeyframes, putKeyframe, motionRange } from '../src/keyframes.mjs';
+
+test('animation presets stay inside the subject and pose edits replace the same frame', () => {
+  for (const id of Object.keys(motionPresets)) {
+    const kf = presetKeyframes(id, 0.4); assert.equal(kf[0].t, 0); assert.equal(kf.at(-1).t, 0.4);
+    assert.ok(kf.every(k => Number.isFinite(k.s))); assert.ok(kfPlan(kf, 4, 0.4).segs.every(s => s.t + s.d <= 4.401));
+  }
+  const first = putKeyframe([], 2, { x: 120, s: 1.4 }, { anchor: true });
+  assert.equal(first[0].x, 0); assert.equal(first[1].x, 120);
+  const updated = putKeyframe(first, 2.001, { x: 160 }); assert.equal(updated.length, 2); assert.equal(updated[1].x, 160);
+  assert.deepEqual(motionRange({ dur: 10, end: 9, heads: [{ t: 5 }, { t: 0 }, { t: 8 }] }, 'head', 0), { start: 5, duration: 3 });
+});
 
 test('kfList: sorted, clamped, junk dropped', () => {
   assert.deepEqual(kfList([{ t: 3 }, { t: -1 }, { t: 'x' }, null, { t: 1 }], 2).map(k => k.t), [0, 1, 2]);

@@ -92,6 +92,29 @@ lengths when known) and the device size per layout, so taps and zoom focus point
 lists for everything else. `test/starters.test.mjs` checks that every starter builds and ends before the end card.
 To add one: add an entry to `starters`, its texts to `text.en` and `text.nl`, and its label and hint to `ui/i18n.js`.
 
+## User templates
+
+`templates/<id>.json` stores `{ version: 1, id, name, description, spec, fields }`. `src/user-templates.mjs`
+enumerates safe text and clip slots and creates independent specs with replacements. Clip slots refer to a unique
+source file and replace all occurrences across both devices, preserving animation/timing and resetting source trim
+and crop only when the source changes. Generated voice audio is omitted; scripts remain for regeneration.
+
+The API supports creating, renaming and trashing templates. `POST /api/videos` accepts `template`, `values` and
+`brand` instead of `spec`, and validates required clip sources before writing the new video. Template removal
+does not remove media or existing videos. Templates use media from the same workspace; they travel with the folder.
+
+## Visual motion editing
+
+`h.kf`, `chip.kf` and `v.deviceMotion.kf` use the same pose format as clip keyframes. Headline times are relative
+to the headline's start, callouts to their start and device motion to video time. Motion is applied to dedicated
+wrappers (`hN-motion`, `chipN-motion`, `phone-motion`, `<video>-clipN-motion`) so entrance/exit effects and source
+placement keep their own transforms. The same generated GSAP plan runs in preview and export.
+
+`motionRange`, `presetKeyframes` and `putKeyframe` are shared by the editor. Visual editing inserts one pose per
+frame through `commit`, with a neutral starting pose for a first drag later in the subject. The preview overlay
+is injected only into the editor's iframe and is never included in exports. Move handles account for
+ancestor transforms, including format scaling and device zoom. Motion settings apply to all output formats.
+
 ## Adding a layout
 
 A new app with a different UI usually needs a different frame around the recording. In `src/template.mjs`:

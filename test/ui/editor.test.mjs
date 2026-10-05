@@ -62,12 +62,59 @@ async function open(t, patch = {}) {
   page = await ctx.newPage();
   await page.goto(url);
   await page.locator('.tl-item.k-clips').first().waitFor();
+  await page.locator('[data-lib=media]').click();
   t.after(() => ctx.close());
 }
 const clip = k => page.locator('.tl-item.k-clips').nth(k);
 const leftOf = async loc => parseFloat(await loc.evaluate(n => n.style.left));
 const saved = () => page.waitForFunction(() => document.querySelector('#save-state').className === 'muted');
 const onDisk = async () => (await fetch(`${url}/api/videos/ui-test`)).json();
+
+uiTest('own templates: save chosen fields, reuse with replacement content, keep the original video', async t => {
+  await open(t);
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: /Opslaan als template$/ }).click();
+  await page.locator('#dlg-template-save input[name=templateName]').fill('Reusable launch');
+  await page.locator('#dlg-template-save button[value=ok]').click();
+  await page.locator('#dlg-template-save').waitFor({ state: 'detached' });
+  await page.getByRole('button', { name: 'Bestand', exact: true }).click();
+  await page.getByRole('menuitem', { name: /Nieuwe video/ }).click();
+  await page.locator('#tpl-grid [data-id="saved:reusable-launch"]').click();
+  await page.locator('#template-inputs [data-slot="heads.0.text"]').fill('A new launch');
+  await page.locator('#template-inputs label').filter({ has: page.locator('[data-slot="media-0"]') }).locator('button.dd').click();
+  await page.locator('.dd-opt[data-value="b.png"]').click();
+  await page.locator('#dlg-new input[name=id]').fill('from-template');
+  await page.locator('#dlg-new button[value=ok]').click();
+  await page.locator('#dlg-new').waitFor({ state: 'hidden' });
+  const v = await (await fetch(`${url}/api/videos/from-template`)).json();
+  assert.equal(v.heads[0].text, 'A new launch'); assert.equal(v.clips[0].src, 'b.png'); assert.equal((await onDisk()).heads[0].text, spec.heads[0].text);
+  await page.reload(); await page.locator('.tl-item.k-head').first().waitFor();
+  await page.getByRole('button', { name: 'Bestand', exact: true }).click();
+  await page.getByRole('menuitem', { name: /Nieuwe video/ }).click();
+  assert.equal(await page.locator('#tpl-grid [data-id="saved:reusable-launch"]').count(), 1);
+});
+
+uiTest('visual motion: headline preset, move/scale/rotate at a playhead, undo and reload', async t => {
+  await open(t);
+  await page.locator('.tl-item.k-head').first().click();
+  await page.locator('[data-motion-kind=head] [data-preset=zoom]').click();
+  await saved(); assert.equal((await onDisk()).heads[0].kf.at(-1).s, 1.18);
+  await page.locator('.motion-edit').click();
+  const front = () => page.frameLocator('.pv.front');
+  await front().locator('#ms-motion-box').waitFor();
+  const dragBox = async (handle, dx, dy) => {
+    await page.locator('#pv-loading').waitFor({ state: 'hidden' });
+    const loc = front().locator(handle ? `#ms-motion-box [data-handle=${handle}]` : '#ms-motion-box');
+    const b = await loc.boundingBox();
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2); await page.mouse.down(); await page.mouse.move(b.x + b.width / 2 + dx, b.y + b.height / 2 + dy, { steps: 8 }); await page.mouse.up();
+    await saved(); await page.locator('#pv-loading').waitFor({ state: 'hidden' }); await front().locator('#ms-motion-box').waitFor();
+  };
+  await dragBox(null, 24, 12); const moved = (await onDisk()).heads[0].kf.find(k => k.x > 1); assert.ok(moved, 'moving adds a pose at the playhead');
+  await dragBox('scale', 18, 14); assert.ok((await onDisk()).heads[0].kf.find(k => k.x > 1).s > moved.s);
+  await dragBox('rotate', 18, 0); assert.ok(Math.abs((await onDisk()).heads[0].kf.find(k => k.x > 1).r) > 1);
+  await page.keyboard.press('Control+z'); await saved(); assert.equal((await onDisk()).heads[0].kf.find(k => k.x > 1).r, 0);
+  await page.reload(); await page.locator('.tl-item.k-head').first().click(); assert.ok(await page.locator('.kf-row').count() >= 3);
+});
 async function drag(loc, dx, { edge, alt } = {}) {
   const box = await (edge ? loc.locator(`.h.${edge}`) : loc).boundingBox();
   const x = edge ? box.x + box.width / 2 : box.x + Math.min(30, box.width / 2), y = box.y + box.height / 2;
